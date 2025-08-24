@@ -7,13 +7,27 @@ import {
   validateJobQuery,
   checkValidation
 } from '../middleware/validation.js';
+import upload from '../middleware/upload.js';
 
 const router = Router();
 
-router.post('/postJobs', validateJobPost, checkValidation, controller.postJobs);
+router.post(
+  '/postJobs',
+  upload.single('image'),
+  validateJobPost,
+  checkValidation,
+  controller.postJobs
+);
+
 router.get('/getJobs', validateJobQuery, checkValidation, controller.getJobs);
 router.get('/:id', controller.getJob);
-router.put('/updateJobs/:id', validateJobUpdate, checkValidation, controller.updateJob);
+router.put(
+  '/updateJobs/:id',
+  upload.single('image'),
+  validateJobUpdate,
+  checkValidation,
+  controller.updateJob
+);;
 router.delete('/deleteJobs/:id', controller.deleteJob);
 
 export default router;

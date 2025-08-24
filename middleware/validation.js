@@ -14,11 +14,7 @@ export const validateJobPost = [
     .withMessage('Invalid category'),
   body('location.postcode')
     .isPostalCode('GB')
-    .withMessage('Valid UK postcode required'),
-  body('image')
-    .optional()
-    .isURL()
-    .withMessage('Image must be a valid URL')
+    .withMessage('Valid UK postcode required')
 ];
 
 // Validation for job updates

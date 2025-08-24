@@ -1,3 +1,4 @@
+// models/Job.js
 import mongoose from 'mongoose';
 
 const JobSchema = new mongoose.Schema(
@@ -5,7 +6,23 @@ const JobSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     description: { type: String, required: true },
     category: { type: String, required: true, index: true },
-    imageUrl: { type: String },
+    
+    // Updated image field for Cloudinary storage
+    image: {
+      public_id: { 
+        type: String, 
+        default: null 
+      },
+      url: { 
+        type: String, 
+        default: null 
+      },
+      originalname: {
+        type: String,
+        default: null
+      }
+    },
+    
     status: { 
       type: String, 
       enum: ['open', 'accepted', 'completed', 'cancelled'], 

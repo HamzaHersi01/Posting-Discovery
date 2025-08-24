@@ -1,151 +1,124 @@
-// controllers/jobsController.js
-
-// Import required modules and services
 import * as jobService from '../services/jobService.js'; // Functions for database operations
 import { geocodePostcode } from '../services/geoService.js'; // Convert postcodes to coordinates
 import mongoose from 'mongoose'; // MongoDB ODM for object ID validation
+import cloudinary from "../config/cloudinary.js";
+import Job from '../models/Job.js';
 
-// POST /api/jobs - Create a new job posting
 export const postJobs = async (req, res) => {
   try {
-    // Extract job data from request body
-    const { title, description, category, location: loc, image } = req.body;
+    const { title, description, category, location } = req.body;
 
-    // Convert postcode to geographic coordinates using external API
-    const geo = await geocodePostcode(loc.postcode);
-    if (!geo) {
-      // Return error if postcode cannot be geocoded
-      return res.status(400).json({ 
-        message: `Postcode not found: ${loc.postcode}` 
-      });
+    if (!title || !description || !category || !location?.postcode) {
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Create job in database with formatted location data
-    const job = await jobService.createJob({
+    // Geocode postcode to get coordinates
+    const geo = await geocodePostcode(location.postcode);
+    if (!geo) {
+      return res.status(400).json({ message: `Invalid postcode: ${location.postcode}` });
+    }
+
+    // Handle optional image upload
+    let imageData = null;
+    if (req.file) {
+      const uploadRes = await cloudinary.uploader.upload(req.file.path, {
+        folder: "repairo/jobs",
+      });
+      imageData = {
+        public_id: uploadRes.public_id,
+        url: uploadRes.secure_url,
+        originalname: req.file.originalname,
+      };
+    } else if (req.body.image) {
+      // Optional: allow JSON image URL
+      imageData = {
+        url: req.body.image,
+        public_id: null,
+        originalname: null,
+      };
+    }
+
+    // Create the job
+    const newJob = new Job({
       title,
       description,
       category,
-      customerId: req.user?.id || "mock-customer-id", // Use authenticated user ID or mock for testing
-      imageUrl: image,
-      location: { type: "Point", ...geo } // GeoJSON Point format for MongoDB geospatial queries
+      customerId: req.user?.id || "mock-customer-id",
+      location: {
+        type: "Point",
+        coordinates: geo.coordinates,
+        postcode: geo.postcode,
+      },
+      image: imageData,
     });
 
-    // Return success response with newly created job ID
-    res.status(201).json({ 
-      message: "Job posted successfully", 
-      jobId: job._id 
-    });
+    await newJob.save();
+
+    res.status(201).json(newJob);
   } catch (err) {
-    // Handle any errors during job creation
-    console.error('Job creation error:', err);
-    res.status(500).json({ 
-      message: "Failed to create job",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined // Only show error details in development
-    });
+    console.error("Error posting job:", err);
+    res.status(500).json({ message: "Server error posting job" });
   }
 };
 
-// GET /api/jobs - Retrieve jobs with optional filtering and pagination
+// GET /api/jobs - List jobs with optional filters
 export const getJobs = async (req, res) => {
   try {
-    // Extract query parameters from URL
-    const { 
-      category,       // Filter by job category (plumbing, electrical, etc.)
-      radius = 5,     // Search radius in kilometers (default: 5km)
-      location: postcode, // Center point for location-based search
-      page = 1,       // Pagination: current page number
-      limit = 10      // Pagination: number of items per page
-    } = req.query;
-    
-    // Base filter - only show open jobs
-    let filter = { status: "open" };
-    // Add category filter if provided
+    const { category, radius = 5, location: postcode, page = 1, limit = 10 } = req.query;
+    const filter = { status: "open" };
     if (category) filter.category = category;
 
-    // Calculate how many documents to skip for pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    let jobs = [];     // Array to store retrieved jobs
-    let totalCount = 0; // Total number of jobs matching filters
+    let jobs = [], totalCount = 0;
 
-    // If location parameter is provided, perform geospatial search
     if (postcode) {
-      // Convert postcode to coordinates
       const geo = await geocodePostcode(postcode);
       if (geo) {
-        // Use geospatial query to find jobs within specified radius
-        jobs = await jobService.findJobsNearLocation(
-          geo.coordinates,          // [longitude, latitude] array
-          parseInt(radius) * 1000,  // Convert km to meters for MongoDB
-          filter,                   // Additional filters (category, status)
-          skip,                     // Pagination skip
-          parseInt(limit)           // Pagination limit
-        );
-        
-        // Get total count for pagination metadata
-        totalCount = await jobService.countJobsNearLocation(
-          geo.coordinates,
-          parseInt(radius) * 1000,
-          filter
-        );
+        jobs = await jobService.findJobsNearLocation(geo.coordinates, parseInt(radius) * 1000, filter, skip, parseInt(limit));
+        totalCount = await jobService.countJobsNearLocation(geo.coordinates, parseInt(radius) * 1000, filter);
       } else {
-        // Fallback: if geocoding fails, return all jobs (with filters)
-        console.warn(`Failed to geocode postcode ${postcode}, returning all jobs`);
         jobs = await jobService.findJobs(filter, skip, parseInt(limit));
         totalCount = await jobService.countJobs(filter);
       }
     } else {
-      // No location provided: return all jobs (with optional category filter)
       jobs = await jobService.findJobs(filter, skip, parseInt(limit));
       totalCount = await jobService.countJobs(filter);
     }
 
-    // Return formatted response with jobs and pagination metadata
     res.json({
       jobs: jobs.map(j => ({
         id: j._id,
         title: j.title,
         description: j.description,
-        location: j.location.postcode, // Return postcode for display
+        location: j.location.postcode,
         status: j.status,
         customerId: j.customerId,
         category: j.category,
+        image: j.image?.url || null,
         createdAt: j.createdAt
       })),
       pagination: {
-        page: parseInt(page),        // Current page
-        limit: parseInt(limit),      // Items per page
-        total: totalCount,           // Total items matching filters
-        pages: Math.ceil(totalCount / parseInt(limit)) // Total pages
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        pages: Math.ceil(totalCount / parseInt(limit))
       }
     });
   } catch (err) {
-    // Handle errors during job retrieval
     console.error('Job fetch error:', err);
-    res.status(500).json({ 
-      message: "Failed to fetch jobs",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    res.status(500).json({ message: "Failed to fetch jobs", error: process.env.NODE_ENV === 'development' ? err.message : undefined });
   }
 };
 
-// GET /api/jobs/:id - Retrieve a single job by ID
+// GET /api/jobs/:id - Get single job
 export const getJob = async (req, res) => {
   try {
-    const { id } = req.params; // Extract job ID from URL parameters
-    
-    // Validate that ID is a valid MongoDB ObjectId
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid job ID format" });
-    }
-    
-    // Find job by ID in database
-    const job = await jobService.findJobById(id);
-    if (!job) {
-      return res.status(404).json({ message: "Job not found" });
-    }
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid job ID format" });
 
-    // Return complete job details
+    const job = await jobService.findJobById(id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
     res.json({
       id: job._id,
       title: job.title,
@@ -153,101 +126,102 @@ export const getJob = async (req, res) => {
       location: job.location.postcode,
       status: job.status,
       customerId: job.customerId,
-      tradesmanId: job.tradesmanId, // ID of tradesman who accepted the job
+      tradesmanId: job.tradesmanId,
       category: job.category,
-      imageUrl: job.imageUrl,       // URL of job image
-      createdAt: job.createdAt,     // When job was created
-      updatedAt: job.updatedAt      // When job was last updated
+      image: job.image || null,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt
     });
   } catch (err) {
-    // Handle errors during single job retrieval
     console.error('Single job fetch error:', err);
-    res.status(500).json({ 
-      message: "Failed to fetch job",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    res.status(500).json({ message: "Failed to fetch job", error: process.env.NODE_ENV === 'development' ? err.message : undefined });
   }
 };
 
-// PUT /api/jobs/:id - Update an existing job
+// PUT /api/jobs/:id - Update job
 export const updateJob = async (req, res) => {
   try {
-    const { id } = req.params; // Job ID from URL
-    const updates = req.body;  // Update data from request body
+    const { id } = req.params;
 
-    // Validate job ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid job ID format" });
     }
 
-    // Check if job exists before attempting update
-    const existingJob = await jobService.findJobById(id);
-    if (!existingJob) {
-      return res.status(404).json({ message: "Job not found" });
+    const job = await Job.findById(id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
+    console.log("Existing job before update:", job);
+
+    const updates = { ...req.body };
+    const removeImage = updates.removeImage === 'true';
+    console.log("Remove image flag:", removeImage);
+    console.log("Incoming file:", req.file);
+
+    // Delete old image if needed
+    if ((req.file || removeImage) && job.image?.public_id) {
+      console.log("Deleting old image from Cloudinary:", job.image.public_id);
+      const destroyRes = await cloudinary.uploader.destroy(job.image.public_id);
+      console.log("Destroy response:", destroyRes);
+      updates.image = null;
     }
 
-    // If postcode is being updated, geocode the new postcode
+    // Upload new image if provided
+    if (req.file) {
+      console.log("Uploading new image...");
+      const uploadRes = await cloudinary.uploader.upload(req.file.path, { folder: "repairo/jobs" });
+      console.log("Upload response:", uploadRes);
+      updates.image = {
+        public_id: uploadRes.public_id,
+        url: uploadRes.secure_url,
+        originalname: req.file.originalname,
+      };
+    }
+
+    // Handle postcode update
     if (updates.location?.postcode) {
       const geo = await geocodePostcode(updates.location.postcode);
       if (!geo) {
-        return res.status(400).json({ 
-          message: `Postcode not found: ${updates.location.postcode}` 
-        });
+        return res.status(400).json({ message: `Postcode not found: ${updates.location.postcode}` });
       }
-      // Replace postcode string with complete GeoJSON Point
-      updates.location = { type: "Point", ...geo };
+      updates.location = {
+        type: "Point",
+        coordinates: geo.coordinates,
+        postcode: geo.postcode,
+      };
     }
 
-    // Perform the update operation
-    const job = await jobService.updateJobById(id, updates);
-    
-    // Return success response with updated job data
-    res.json({ 
-      message: "Job updated successfully", 
-      job: {
-        id: job._id,
-        title: job.title,
-        description: job.description,
-        location: job.location.postcode,
-        status: job.status,
-        customerId: job.customerId,
-        category: job.category
-      }
+    console.log("Final updates object:", updates);
+
+    const updatedJob = await Job.findByIdAndUpdate(id, updates, { new: true });
+    console.log("Updated job:", updatedJob);
+
+    res.status(200).json({
+      message: "Job updated successfully",
+      job: updatedJob,
     });
   } catch (err) {
-    // Handle errors during job update
-    console.error("Update job error:", err);
-    res.status(500).json({ 
-      message: "Failed to update job",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    console.error("Error updating job:", err);
+    res.status(500).json({ message: "Server error updating job" });
   }
 };
 
-// DELETE /api/jobs/:id - Remove a job from the database
+
+// DELETE /api/jobs/:id - Delete job
 export const deleteJob = async (req, res) => {
   try {
-    const { id } = req.params; // Job ID from URL
-    
-    // Validate job ID format
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid job ID format" });
-    }
-    
-    // Attempt to delete the job
-    const job = await jobService.deleteJobById(id);
-    if (!job) {
-      return res.status(404).json({ message: "Job not found" });
-    }
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid job ID format" });
 
-    // Return success message
+    const job = await Job.findById(id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
+    // Delete image from Cloudinary if exists
+    if (job.image?.public_id) await cloudinary.uploader.destroy(job.image.public_id);
+
+    await jobService.deleteJobById(id);
     res.json({ message: "Job deleted successfully" });
   } catch (err) {
-    // Handle errors during job deletion
     console.error("Delete job error:", err);
-    res.status(500).json({ 
-      message: "Failed to delete job",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    res.status(500).json({ message: "Failed to delete job", error: process.env.NODE_ENV === 'development' ? err.message : undefined });
   }
 };
