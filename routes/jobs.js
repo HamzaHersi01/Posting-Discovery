@@ -5,7 +5,9 @@ import {
   validateJobPost,
   validateJobUpdate,
   validateJobQuery,
-  checkValidation
+  checkValidation,
+  validateCustomerId,
+  validateTradesmanId,
 } from '../middleware/validation.js';
 import upload from '../middleware/upload.js';
 
@@ -29,5 +31,20 @@ router.put(
   controller.updateJob
 );;
 router.delete('/deleteJobs/:id', controller.deleteJob);
+//Get jobs by customerId with param validation
+router.get(
+  '/customer/:customerId',
+  validateCustomerId,
+  checkValidation,
+  controller.getJobsByCustomer
+);
+
+// Get jobs by tradesmanId with param validation
+router.get(
+  '/tradesman/:tradesmanId',
+  validateTradesmanId,
+  checkValidation,
+  controller.getJobsByTradesman
+);
 
 export default router;

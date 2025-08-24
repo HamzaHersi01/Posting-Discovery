@@ -59,8 +59,20 @@ export const validateJobQuery = [
     .isInt({ min: 1, max: 50 })
     .withMessage('Limit must be between 1 and 50')
 ];
+export const validateCustomerId = [
+  param('customerId')
+    .isMongoId()
+    .withMessage('Invalid customerId format'),
+];
 
-// Check for validation errors - MAKE SURE THIS EXPORT EXISTS
+export const validateTradesmanId = [
+  param('tradesmanId')
+    .isMongoId()
+    .withMessage('Invalid tradesmanId format'),
+];
+
+
+// Check for validation errors
 export const checkValidation = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {

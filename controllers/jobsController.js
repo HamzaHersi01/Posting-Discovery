@@ -225,3 +225,37 @@ export const deleteJob = async (req, res) => {
     res.status(500).json({ message: "Failed to delete job", error: process.env.NODE_ENV === 'development' ? err.message : undefined });
   }
 };
+
+// GET /api/jobs/customer/:customerId
+export const getJobsByCustomer = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const jobs = await Job.find({ customerId });
+
+    if (!jobs || jobs.length === 0) {
+      return res.status(404).json({ message: 'No jobs found for this customer' });
+    }
+
+    res.json(jobs);
+  } catch (error) {
+    console.error('Error fetching jobs by customerId:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// GET /api/jobs/tradesman/:tradesmanId
+export const getJobsByTradesman = async (req, res) => {
+  try {
+    const { tradesmanId } = req.params;
+    const jobs = await Job.find({ tradesmanId });
+
+    if (!jobs || jobs.length === 0) {
+      return res.status(404).json({ message: 'No jobs found for this tradesman' });
+    }
+
+    res.json(jobs);
+  } catch (error) {
+    console.error('Error fetching jobs by tradesmanId:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
